@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter/material.dart';
 import 'package:speech_to_text/speech_recognition_error.dart';
 import 'package:speech_to_text/speech_to_text.dart';
@@ -8,13 +11,52 @@ Future<String?> dictar(
   BuildContext context, {
   required String titulo,
   required String ayuda,
-}) {
-  return showModalBottomSheet<String>(
-    context: context,
-    isScrollControlled: true,
-    isDismissible: false,
-    builder: (_) => _DictadoSheet(titulo: titulo, ayuda: ayuda),
-  );
+}) async {
+  final servicio = FlutterBackgroundService();
+  final id = DateTime.now().microsecondsSinceEpoch.toString();
+  StreamSubscription<Map<String, dynamic>?>? reserva;
+  bool reservado = false;
+  if (await servicio.isRunning()) {
+    final listo = Completer<bool>();
+    reserva = servicio.on('vozDictadoListo').listen((datos) {
+      if (datos?['id'] == id && !listo.isCompleted) {
+        listo.complete(datos?['ok'] == true);
+      }
+    });
+    servicio.invoke('vozDictado', {'id': id, 'activo': true});
+    reservado = await listo.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => false,
+    );
+    await reserva.cancel();
+    if (!reservado) {
+      servicio.invoke('vozDictado', {'id': id, 'activo': false});
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'El micrófono está ocupado por la alarma. Intenta después.',
+            ),
+          ),
+        );
+      }
+      return null;
+    }
+  }
+  if (!context.mounted) {
+    if (reservado) servicio.invoke('vozDictado', {'id': id, 'activo': false});
+    return null;
+  }
+  try {
+    return await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      isDismissible: false,
+      builder: (_) => _DictadoSheet(titulo: titulo, ayuda: ayuda),
+    );
+  } finally {
+    if (reservado) servicio.invoke('vozDictado', {'id': id, 'activo': false});
+  }
 }
 
 class _DictadoSheet extends StatefulWidget {
@@ -28,11 +70,14 @@ class _DictadoSheet extends StatefulWidget {
 
 class _DictadoSheetState extends State<_DictadoSheet> {
   final _voz = SpeechToText();
+  StreamSubscription<Map<String, dynamic>?>? _alarmas;
+  Timer? _limiteDictado;
 
   /// Lo confirmado en tandas anteriores (cada pausa larga cierra una tanda).
   String _acumulado = '';
   String _parcial = '';
   bool _escuchando = false;
+  bool _interrumpido = false;
   String? _error;
 
   String get _texto =>
@@ -41,6 +86,28 @@ class _DictadoSheetState extends State<_DictadoSheet> {
   @override
   void initState() {
     super.initState();
+    _alarmas = FlutterBackgroundService().on('liberarDictado').listen((
+      _,
+    ) async {
+      _interrumpido = true;
+      await _voz.cancel();
+      FlutterBackgroundService().invoke('dictadoLiberado');
+      if (!mounted) return;
+      if (ModalRoute.of(context)?.isCurrent == true) {
+        Navigator.pop(context);
+      } else {
+        setState(() {
+          _escuchando = false;
+          _error =
+              'Dictado detenido para grabar la alarma. Cierra y vuelve a abrir el dictado después.';
+        });
+      }
+    });
+    // La reserva del servicio dura 3 minutos: cerrar antes de que expire.
+    _limiteDictado = Timer(
+      const Duration(minutes: 2, seconds: 50),
+      () => _terminar(true),
+    );
     _iniciar();
   }
 
@@ -65,7 +132,7 @@ class _DictadoSheetState extends State<_DictadoSheet> {
         }
       },
     );
-    if (!mounted) return;
+    if (!mounted || _interrumpido) return;
     if (!ok) {
       setState(() {
         _error =
@@ -78,6 +145,7 @@ class _DictadoSheetState extends State<_DictadoSheet> {
   }
 
   Future<void> _escuchar() async {
+    if (_interrumpido) return;
     final locales = await _voz.locales();
     final espanol = locales.where((l) => l.localeId.startsWith('es')).toList();
     final preferido = espanol.firstWhere(
@@ -86,6 +154,7 @@ class _DictadoSheetState extends State<_DictadoSheet> {
           ? espanol.first
           : (locales.isNotEmpty ? locales.first : LocaleName('es_ES', '')),
     );
+    if (!mounted || _interrumpido) return;
     setState(() {
       _error = null;
       _escuchando = true;
@@ -116,13 +185,20 @@ class _DictadoSheetState extends State<_DictadoSheet> {
   };
 
   Future<void> _terminar(bool usar) async {
+    _interrumpido = true;
     await _voz.stop();
     if (!mounted) return;
+    if (ModalRoute.of(context)?.isCurrent != true) {
+      setState(() => _escuchando = false);
+      return;
+    }
     Navigator.pop(context, usar && _texto.isNotEmpty ? _texto : null);
   }
 
   @override
   void dispose() {
+    _limiteDictado?.cancel();
+    _alarmas?.cancel();
     _voz.cancel();
     super.dispose();
   }

@@ -1,18 +1,23 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
+
 import 'contactos_screen.dart';
 import 'config_pin_screen.dart';
 import '../navegacion.dart';
 import '../services/pin_service.dart';
 import '../services/background_service.dart';
 import '../services/notificacion_alarma.dart';
+
 import 'package:centinela_nativo/centinela_nativo.dart';
+
 import '../models/incidente.dart';
 import '../services/informe_service.dart';
 import 'configuracion_denunciante_screen.dart';
 import 'historial_incidentes_screen.dart';
+import 'configuracion_voz_screen.dart';
 
 class _OpcionPausa {
   final String etiqueta;
@@ -60,6 +65,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _alarmaFalsaActiva = false;
   String? _pausaEtiqueta;
   bool _pausaIndefinida = false;
+  String _estadoVoz = 'Abre para configurar días, horario y frases';
 
   @override
   void initState() {
@@ -79,6 +85,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (!mounted || datos == null) return;
       setState(() {
         _sensoresActivos = datos['vigilando'] == true;
+        final voz = datos['voz'];
+        if (voz is Map) {
+          _estadoVoz = etiquetaEstadoVoz(
+            voz['estado'] as String? ?? 'desactivada',
+          );
+        }
         _alarmaFalsaActiva = datos['alarma'] == 'falsaAlarma';
         if (_sensoresActivos) {
           _pausaEtiqueta = null;
@@ -282,9 +294,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         child: Text(
                           _sensoresActivos
                               ? 'Vigilancia ACTIVA\nSacudidas monitoreadas'
-                                : _pausaIndefinida
-                                ? '⏸️ Vigilancia INACTIVA (se reactiva manualmente)'
-                                : '⏸️ Vigilancia INACTIVA (se reactiva en ${(_pausaEtiqueta ?? '30 minutos').replaceFirst('Solo ', '')})',
+                              : _pausaIndefinida
+                              ? '⏸️ Vigilancia INACTIVA (se reactiva manualmente)'
+                              : '⏸️ Vigilancia INACTIVA (se reactiva en ${(_pausaEtiqueta ?? '30 minutos').replaceFirst('Solo ', '')})',
                           style: const TextStyle(fontSize: 13),
                         ),
                       ),
@@ -423,6 +435,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                   );
                   _actualizarInformes();
+                },
+              ),
+              const SizedBox(height: 12),
+              _botonMenu(
+                icono: Icons.record_voice_over,
+                titulo: 'Protección por voz',
+                subtitulo: _estadoVoz,
+                onTap: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const ConfiguracionVozScreen(),
+                    ),
+                  );
+                  FlutterBackgroundService().invoke('consultarEstado');
                 },
               ),
               const SizedBox(height: 12),

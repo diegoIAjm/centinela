@@ -42,6 +42,7 @@ public class CentinelaNativoPlugin implements FlutterPlugin, MethodChannel.Metho
 
   private MethodChannel canal;
   private Context contexto;
+  private VozLocal voz;
   private final Handler principal = new Handler(Looper.getMainLooper());
 
   @Override
@@ -49,10 +50,12 @@ public class CentinelaNativoPlugin implements FlutterPlugin, MethodChannel.Metho
     contexto = binding.getApplicationContext();
     canal = new MethodChannel(binding.getBinaryMessenger(), "centinela_nativo");
     canal.setMethodCallHandler(this);
+    voz = new VozLocal(contexto, binding.getBinaryMessenger());
   }
 
   @Override
   public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
+    voz.cerrar();
     canal.setMethodCallHandler(null);
   }
 

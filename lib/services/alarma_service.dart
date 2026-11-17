@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:io';
+
 import 'package:centinela_nativo/centinela_nativo.dart';
 import 'package:flutter/foundation.dart';
+
 import 'audio_service.dart';
 import 'alerta_service.dart';
 import 'ubicacion_service.dart';
@@ -9,6 +11,8 @@ import 'sensor_service.dart';
 import 'cloudinary_service.dart';
 import 'alarma_sonido_service.dart';
 import 'informe_service.dart';
+import 'voz/motor_voz.dart';
+import 'voz/proteccion_voz_service.dart';
 
 enum EstadoAlarma { inactiva, activa, falsaAlarma, cancelada }
 
@@ -30,6 +34,11 @@ class _Incidente {
 
 /// Esta instancia pertenece exclusivamente al isolate del servicio.
 class AlarmaService {
+  late final voz = ProteccionVozService(
+    motor: MotorVozLocal(),
+    activarAlarma: () => activarAlarma(origen: 'voz'),
+    alCambiar: () => onBitacora?.call(),
+  );
   final _audio = AudioService();
   final _alerta = AlertaService();
   final _sensores = SensorService();
@@ -41,6 +50,7 @@ class AlarmaService {
   bool get grabando => _audio.grabando;
   int _sesion = 0;
   _Incidente? _incidente;
+  Future<void> Function()? liberarDictado;
   Future<void>? _captura;
   Future<void>? _arranque;
   Future<void>? _ubicacion;
@@ -81,12 +91,21 @@ class AlarmaService {
   Future<void> iniciarVigilancia() async {
     _sensores.onAmenazaDetectada = (_) => unawaited(activarAlarma());
     await _sensores.iniciar();
+    await voz.iniciar();
+    await voz.disponible(true);
   }
 
-  Future<void> pausarSensores() async => _sensores.pausar();
-  void reanudarSensores() => _sensores.reanudar();
+  Future<void> pausarSensores() async {
+    _sensores.pausar();
+    await voz.disponible(false);
+  }
 
-  Future<void> activarAlarma() async {
+  Future<void> reanudarSensores() async {
+    _sensores.reanudar();
+    await voz.disponible(true);
+  }
+
+  Future<void> activarAlarma({String origen = 'manual o agitado'}) async {
     if (_cancelando || _estado != EstadoAlarma.inactiva) return;
     final sesion = ++_sesion;
     final incidente = _incidente = _Incidente(
@@ -102,7 +121,7 @@ class AlarmaService {
     final fin = Completer<void>();
     _fin = fin;
     bitacora.clear();
-    _registrar('🚨 Alarma activada');
+    _registrar('🚨 Alarma activada ($origen)');
     _cambiar(EstadoAlarma.activa);
     // Con permiso "Mostrar sobre otras apps" se abre directo aunque la app
     // esté cerrada; si no, queda la notificación de pantalla completa.
@@ -112,11 +131,14 @@ class AlarmaService {
   }
 
   Future<void> _prepararCaptura(_Incidente incidente, Future<void> fin) async {
+    // El aviso de ubicación no debe depender de que el micrófono esté libre.
+    final ubicacion = _ubicacion = _enviarUbicacion(incidente);
     try {
+      await voz.disponible(false);
+      await liberarDictado?.call();
       await _sensores.detener();
       if (incidente.sesion != _sesion) return;
-      // Ubicación + SMS y grabación arrancan en paralelo.
-      final ubicacion = _ubicacion = _enviarUbicacion(incidente);
+      // La grabación espera la liberación del detector y del dictado.
       _captura = _grabar(incidente, ubicacion, fin);
       if (_estado == EstadoAlarma.activa) await _sonido.iniciar();
       if (_estado != EstadoAlarma.activa) await _sonido.detener();
@@ -320,6 +342,7 @@ class AlarmaService {
     _fin = null;
     await _arranque;
     await _captura;
+    await voz.cerrar();
     await _sensores.detener();
     await _sonido.detener();
   }

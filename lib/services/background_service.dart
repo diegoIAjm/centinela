@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:ui';
+
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
+
 import 'alarma_service.dart';
 import 'informe_service.dart';
 import 'notificacion_alarma.dart';
@@ -96,6 +98,7 @@ void _iniciarServicio(ServiceInstance servicio) async {
       'pausaIndefinida': pausaIndefinida,
       'error': encubierto() ? null : error,
       'bitacora': encubierto() ? const <String>[] : alarma.bitacora,
+      'voz': encubierto() ? {'estado': 'suspendida'} : alarma.voz.resumen,
     });
   }
 
@@ -107,6 +110,14 @@ void _iniciarServicio(ServiceInstance servicio) async {
             ? 'Protección con incidencias. Abre la app.'
             : alarma.sensoresPausados
             ? 'Protección pausada'
+            : alarma.voz.estado == 'escuchando'
+            ? (alarma.voz.config.modoPrueba
+                  ? 'Voz en prueba · sin alertas por voz'
+                  : 'Protección activa · voz escuchando')
+            : alarma.voz.estado == 'esperando'
+            ? 'Protección activa · voz esperando horario'
+            : alarma.voz.estado == 'error'
+            ? 'Agitado activo · voz con error'
             : 'Protección activa',
       );
     }
@@ -139,10 +150,44 @@ void _iniciarServicio(ServiceInstance servicio) async {
     publicar();
     unawaited(notificar());
   };
-  alarma.onBitacora = publicar;
+  alarma.onBitacora = () {
+    publicar();
+    unawaited(notificar());
+  };
   alarma.onIncidenteFinalizado = (id) =>
       servicio.invoke('incidenteFinalizado', {'id': id});
+  Completer<void>? finDictado;
+  servicio.on('dictadoLiberado').listen((_) {
+    if (finDictado?.isCompleted == false) finDictado!.complete();
+  });
+  alarma.liberarDictado = () async {
+    if (!alarma.voz.dictadoActivo) return;
+    final fin = finDictado = Completer<void>();
+    servicio.invoke('liberarDictado');
+    try {
+      await fin.future.timeout(const Duration(seconds: 3));
+    } finally {
+      finDictado = null;
+      await alarma.voz.dictado(false);
+    }
+  };
   servicio.on('consultarEstado').listen((_) => publicar());
+  servicio.on('recargarVoz').listen((_) => ejecutar(alarma.voz.recargar));
+  servicio
+      .on('vozDictado')
+      .listen(
+        (datos) => ejecutar(() async {
+          if (alarma.estado != EstadoAlarma.inactiva) {
+            servicio.invoke('vozDictadoListo', {
+              'id': datos?['id'],
+              'ok': false,
+            });
+            return;
+          }
+          await alarma.voz.dictado(datos?['activo'] == true);
+          servicio.invoke('vozDictadoListo', {'id': datos?['id'], 'ok': true});
+        }),
+      );
   servicio.on('activarAlarma').listen((_) => ejecutar(alarma.activarAlarma));
   void cancelar(String mensajeCierre) => ejecutar(() async {
     error = null;
@@ -173,7 +218,7 @@ void _iniciarServicio(ServiceInstance servicio) async {
                   ejecutar(() async {
                     pausaEtiqueta = null;
                     pausaIndefinida = false;
-                    alarma.reanudarSensores();
+                    await alarma.reanudarSensores();
                   });
                 });
         }),
@@ -182,16 +227,18 @@ void _iniciarServicio(ServiceInstance servicio) async {
       .on('reanudar')
       .listen(
         (_) => ejecutar(() async {
+          if (alarma.estado != EstadoAlarma.inactiva) return;
           pausa?.cancel();
           pausaEtiqueta = null;
           pausaIndefinida = false;
-          alarma.reanudarSensores();
+          await alarma.reanudarSensores();
         }),
       );
   servicio
       .on('detener')
       .listen(
         (_) => ejecutar(() async {
+          if (alarma.estado != EstadoAlarma.inactiva) return;
           pausa?.cancel();
           pausaEtiqueta = null;
           pausaIndefinida = false;
