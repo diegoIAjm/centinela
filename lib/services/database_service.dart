@@ -21,7 +21,7 @@ class DatabaseService {
     final path = join(await getDatabasesPath(), 'centinela.db');
     return await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE contactos(
@@ -33,7 +33,12 @@ class DatabaseService {
         await _crearIncidentes(db);
       },
       onUpgrade: (db, anterior, nueva) async {
-        if (anterior < 2) await _crearIncidentes(db);
+        if (anterior < 2) {
+          await _crearIncidentes(db);
+        } else if (anterior < 3) {
+          // Datos extra del formulario de denuncia, como JSON.
+          await db.execute('ALTER TABLE incidentes ADD COLUMN formulario TEXT');
+        }
       },
     );
   }
@@ -56,7 +61,8 @@ class DatabaseService {
       tipo_delito TEXT,
       relato TEXT,
       testigos TEXT,
-      observaciones TEXT
+      observaciones TEXT,
+      formulario TEXT
     )
   ''');
 

@@ -6,6 +6,7 @@ import 'navegacion.dart';
 import 'screens/home_screen.dart';
 import 'services/background_service.dart';
 import 'services/notificacion_alarma.dart';
+import 'tema.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -66,7 +67,7 @@ class MyApp extends StatelessWidget {
       title: 'Centinela',
       navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(primarySwatch: Colors.red, useMaterial3: true),
+      theme: temaCentinela(),
       home: const HomeScreen(),
     );
   }

@@ -4,6 +4,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'contactos_screen.dart';
 import 'config_pin_screen.dart';
+import 'config_voz_screen.dart';
 import '../navegacion.dart';
 import '../services/pin_service.dart';
 import '../services/background_service.dart';
@@ -13,6 +14,8 @@ import '../models/incidente.dart';
 import '../services/informe_service.dart';
 import 'configuracion_denunciante_screen.dart';
 import 'historial_incidentes_screen.dart';
+import '../tema.dart';
+import '../widgets/ui.dart';
 
 class _OpcionPausa {
   final String etiqueta;
@@ -60,6 +63,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _alarmaFalsaActiva = false;
   String? _pausaEtiqueta;
   bool _pausaIndefinida = false;
+  String? _estadoVoz;
+  String? _errorVoz;
 
   @override
   void initState() {
@@ -80,6 +85,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       setState(() {
         _sensoresActivos = datos['vigilando'] == true;
         _alarmaFalsaActiva = datos['alarma'] == 'falsaAlarma';
+        _estadoVoz = datos['vozEstado'] as String?;
+        _errorVoz = datos['vozError'] as String?;
         if (_sensoresActivos) {
           _pausaEtiqueta = null;
           _pausaIndefinida = false;
@@ -172,7 +179,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
       return;
     }
-    _iniciando = true;
+    setState(() => _iniciando = true);
     try {
       await [
         Permission.microphone,
@@ -199,7 +206,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     } catch (e) {
       _mostrarMensaje('No se pudo activar la protección: $e', Colors.red);
     } finally {
-      _iniciando = false;
+      if (mounted) setState(() => _iniciando = false);
     }
   }
 
@@ -246,219 +253,309 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _mostrarMensaje(String texto, Color color) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
+    mostrarMensaje(
       context,
-    ).showSnackBar(SnackBar(content: Text(texto), backgroundColor: color));
+      texto,
+      tipo: color == Colors.red ? TipoAviso.peligro : TipoAviso.info,
+    );
   }
+
+  Future<void> _abrir(Widget pantalla) =>
+      Navigator.push(context, MaterialPageRoute(builder: (_) => pantalla));
+
+  String get _textoVoz {
+    if (_errorVoz != null) return 'Voz no disponible, reintentando';
+    return switch (_estadoVoz) {
+      'escuchando' => 'Activación por voz: escuchando',
+      'iniciando' => 'Activación por voz: conectando',
+      'esperando' => 'Activación por voz: en espera',
+      'pausada' => 'Activación por voz: pausada',
+      'reservada' => 'Activación por voz: micrófono en uso',
+      'dictado' => 'Activación por voz: en pausa por dictado',
+      'desactivada' => 'Activación por voz: desactivada',
+      _ => 'Activación por voz: detenida',
+    };
+  }
+
+  Widget _tarjetaEstado() {
+    final activo = _sensoresActivos;
+    final color = activo ? Paleta.exito : Paleta.aviso;
+    final detalle = activo
+        ? 'Se detectan sacudidas del teléfono y, si lo configuraste, tu voz.'
+        : _pausaIndefinida
+        ? 'Pausada hasta que la reactives.'
+        : 'Se reactivará sola en '
+              '${(_pausaEtiqueta ?? '30 minutos').replaceFirst('Solo ', '')}.';
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    color: activo ? Paleta.exitoFondo : Paleta.avisoFondo,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    activo ? Icons.shield : Icons.pause_circle_outline,
+                    color: color,
+                    size: 30,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        activo ? 'Protección activa' : 'Protección en pausa',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                          color: color,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(detalle),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            if (_estadoVoz != null) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Icon(
+                    _errorVoz != null ? Icons.mic_off : Icons.mic_none,
+                    size: 20,
+                    color: _errorVoz != null
+                        ? Paleta.aviso
+                        : Paleta.textoSecundario,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _textoVoz,
+                      style: const TextStyle(color: Paleta.textoSecundario),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 16),
+            if (activo)
+              OutlinedButton.icon(
+                onPressed: _iniciando ? null : _togglePausa,
+                icon: const Icon(Icons.pause),
+                label: const Text('Pausar protección'),
+              )
+            else
+              FilledButton.icon(
+                onPressed: _iniciando ? null : _reactivarAhora,
+                icon: _iniciando
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.play_arrow),
+                label: Text(
+                  _iniciando ? 'Activando…' : 'Activar protección ahora',
+                ),
+              ),
+            if (_alarmaFalsaActiva) ...[
+              const SizedBox(height: 8),
+              OutlinedButton(
+                onPressed: _estoyASalvo,
+                child: const Text('Estoy a salvo'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _pendientes() => [
+    if (!_pinesConfigurados)
+      Aviso(
+        tipo: TipoAviso.peligro,
+        titulo: 'Configura tus PIN',
+        texto: 'Sin ellos no se puede activar la protección.',
+        onTap: () async {
+          await _abrir(const ConfigPinScreen());
+          _verificarConfiguracion();
+        },
+      ),
+    if (!_abreSobreBloqueo)
+      Aviso(
+        tipo: TipoAviso.aviso,
+        titulo: 'La alarma no se abrirá con el teléfono bloqueado',
+        texto:
+            'Permite "Mostrar sobre otras apps" y "Notificaciones a '
+            'pantalla completa".',
+        onTap: _pedirAperturaSobreBloqueo,
+      ),
+    if (!_datosDenuncianteCompletos)
+      Aviso(
+        tipo: TipoAviso.aviso,
+        titulo: 'Completa tus datos personales',
+        texto: 'Se usan para llenar el formulario de denuncia.',
+        onTap: () async {
+          await _abrir(const ConfiguracionDenuncianteScreen());
+          _actualizarInformes();
+        },
+      ),
+    if (_incidentesPendientes > 0)
+      Aviso(
+        tipo: TipoAviso.aviso,
+        titulo: _incidentesPendientes == 1
+            ? '1 formulario de denuncia por completar'
+            : '$_incidentesPendientes formularios de denuncia por completar',
+        onTap: () async {
+          await _abrir(const HistorialIncidentesScreen());
+          _actualizarInformes();
+        },
+      ),
+  ];
+
+  Widget _ultimoIncidente() => Card(
+    clipBehavior: Clip.antiAlias,
+    child: ExpansionTile(
+      leading: const Icon(Icons.receipt_long_outlined),
+      title: const Text('Registro de la última alarma'),
+      subtitle: Text(
+        _bitacora.last,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 13),
+      ),
+      children: [
+        for (final linea in _bitacora.reversed)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: SelectableText(
+                linea,
+                style: const TextStyle(fontSize: 13),
+              ),
+            ),
+          ),
+        const SizedBox(height: 12),
+      ],
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
+    final pendientes = _pendientes();
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Centinela'),
-        backgroundColor: Colors.red,
+        titleSpacing: 12,
+        title: Row(
+          children: [
+            Image.asset('assets/images/logo_emblema.png', width: 36),
+            const SizedBox(width: 10),
+            const Text('Centinela'),
+          ],
+        ),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: SingleChildScrollView(
-          child: Column(
-            children: [
-              // ====== ESTADO DE SENSORES ======
-              Card(
-                color: _sensoresActivos
-                    ? Colors.green.shade100
-                    : Colors.orange.shade100,
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-                      Icon(
-                        _sensoresActivos ? Icons.shield : Icons.pause_circle,
-                        color: _sensoresActivos ? Colors.green : Colors.orange,
-                        size: 30,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          _sensoresActivos
-                              ? 'Vigilancia ACTIVA\nSacudidas monitoreadas'
-                                : _pausaIndefinida
-                                ? '⏸️ Vigilancia INACTIVA (se reactiva manualmente)'
-                                : '⏸️ Vigilancia INACTIVA (se reactiva en ${(_pausaEtiqueta ?? '30 minutos').replaceFirst('Solo ', '')})',
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                      ),
-                      Switch(
-                        value: _sensoresActivos,
-                        onChanged: (_) => _togglePausa(),
-                        activeThumbColor: Colors.green,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              if (!_sensoresActivos)
-                TextButton(
-                  onPressed: _reactivarAhora,
-                  child: const Text('Reactivar ahora'),
-                ),
-              if (_alarmaFalsaActiva)
-                ElevatedButton(
-                  onPressed: _estoyASalvo,
-                  child: const Text('Estoy a salvo'),
-                ),
-              const SizedBox(height: 15),
-              const Text(
-                'Activa la protección antes de bloquear el teléfono o quitar la app de recientes. '
-                'Mantén la notificación activa. Después de reiniciar o forzar la detención, abre la app nuevamente.',
-                style: TextStyle(fontSize: 12),
-              ),
-              TextButton.icon(
-                icon: const Icon(Icons.battery_saver),
-                label: const Text(
-                  'Permitir protección sin restricción de batería',
-                ),
-                onPressed: () async {
-                  await Permission.ignoreBatteryOptimizations.request();
-                },
-              ),
-
-              if (!_abreSobreBloqueo)
-                Card(
-                  color: const Color(0xFFFFE0B2),
-                  child: ListTile(
-                    leading: const Icon(Icons.lock_open, color: Colors.orange),
-                    title: const Text(
-                      'La alarma no podrá abrirse sola con el teléfono bloqueado',
-                      style: TextStyle(fontSize: 13),
-                    ),
-                    subtitle: const Text(
-                      'Toca para permitir "Mostrar sobre otras apps" y '
-                      '"Notificaciones a pantalla completa".',
-                      style: TextStyle(fontSize: 12),
-                    ),
-                    onTap: _pedirAperturaSobreBloqueo,
-                  ),
-                ),
-              if (_bitacora.isNotEmpty)
-                Card(
-                  child: ExpansionTile(
-                    leading: const Icon(Icons.history),
-                    title: const Text('Último incidente'),
-                    subtitle: Text(
-                      _bitacora.last,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                    children: [
-                      for (final linea in _bitacora.reversed)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 3,
-                          ),
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: SelectableText(
-                              linea,
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                        ),
-                      const SizedBox(height: 8),
-                    ],
-                  ),
-                ),
-              if (!_pinesConfigurados)
-                const Card(
-                  color: Color(0xFFFFCDD2),
-                  child: Padding(
-                    padding: EdgeInsets.all(12),
-                    child: Row(
-                      children: [
-                        Icon(Icons.warning, color: Colors.red),
-                        SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            'Aún no has configurado tus PINs. Hazlo antes de usar la app.',
-                            style: TextStyle(fontSize: 13),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              const SizedBox(height: 10),
-              _botonMenu(
-                icono: _datosDenuncianteCompletos
-                    ? Icons.verified_user
-                    : Icons.person_outline,
-                titulo: _datosDenuncianteCompletos
-                    ? '✅ Mis datos configurados'
-                    : '⚠️ Configurar mis datos',
-                subtitulo: 'Datos personales para el informe de denuncia',
-                onTap: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const ConfiguracionDenuncianteScreen(),
-                    ),
-                  );
-                  _actualizarInformes();
-                },
-              ),
-              const SizedBox(height: 12),
-              _botonMenu(
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+          children: [
+            _tarjetaEstado(),
+            if (pendientes.isNotEmpty) ...[
+              const EncabezadoSeccion('Pendientes'),
+              ...pendientes,
+            ],
+            const EncabezadoSeccion('Denuncias'),
+            GrupoOpciones([
+              OpcionMenu(
                 icono: Icons.history,
-                titulo: 'Historial de incidentes ($_incidentes)',
-                subtitulo: _incidentesPendientes == 0
-                    ? 'Alarmas registradas e informes'
-                    : '⚠️ $_incidentesPendientes informe(s) por completar',
+                titulo: 'Historial de incidentes',
+                subtitulo: 'Alarmas registradas y formularios',
+                insignia: _incidentes == 0 ? null : Insignia('$_incidentes'),
                 onTap: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const HistorialIncidentesScreen(),
-                    ),
-                  );
+                  await _abrir(const HistorialIncidentesScreen());
                   _actualizarInformes();
                 },
               ),
-              const SizedBox(height: 12),
-              _botonMenu(
-                icono: Icons.contacts,
-                titulo: 'Contactos de Emergencia',
-                subtitulo: 'Personas que recibirán tu SOS',
+              OpcionMenu(
+                icono: Icons.badge_outlined,
+                titulo: 'Mis datos personales',
+                subtitulo: 'Datos del denunciante',
+                insignia: _datosDenuncianteCompletos
+                    ? null
+                    : const Insignia('Incompleto', tipo: TipoAviso.aviso),
                 onTap: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const ContactosScreen()),
-                  );
+                  await _abrir(const ConfiguracionDenuncianteScreen());
+                  _actualizarInformes();
                 },
               ),
-              const SizedBox(height: 12),
-              _botonMenu(
-                icono: Icons.lock,
-                titulo: 'Configurar PINs',
-                subtitulo: 'PIN real y PIN falso',
+            ]),
+            const EncabezadoSeccion('Configuración'),
+            GrupoOpciones([
+              OpcionMenu(
+                icono: Icons.contacts_outlined,
+                titulo: 'Contactos de emergencia',
+                subtitulo: 'Reciben tu ubicación y audios',
+                onTap: () => _abrir(const ContactosScreen()),
+              ),
+              OpcionMenu(
+                icono: Icons.pin_outlined,
+                titulo: 'PIN de seguridad',
+                subtitulo: 'PIN real y PIN de coacción',
+                insignia: _pinesConfigurados
+                    ? null
+                    : const Insignia('Falta', tipo: TipoAviso.peligro),
                 onTap: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const ConfigPinScreen()),
-                  );
+                  await _abrir(const ConfigPinScreen());
                   _verificarConfiguracion();
                 },
               ),
-              const SizedBox(height: 12),
-              const SizedBox(height: 30),
-              const Text(
-                'Centinela v1.0\nTu seguridad, en tus manos.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey, fontSize: 12),
+              OpcionMenu(
+                icono: Icons.record_voice_over_outlined,
+                titulo: 'Activación por voz',
+                subtitulo: 'Volumen y palabras clave',
+                onTap: () => _abrir(const ConfigVozScreen()),
               ),
+              OpcionMenu(
+                icono: Icons.battery_charging_full_outlined,
+                titulo: 'Funcionar sin restricción de batería',
+                subtitulo: 'Evita que Android detenga la protección',
+                onTap: () => Permission.ignoreBatteryOptimizations.request(),
+              ),
+            ]),
+            if (_bitacora.isNotEmpty) ...[
+              const EncabezadoSeccion('Actividad'),
+              _ultimoIncidente(),
             ],
-          ),
+            const SizedBox(height: 16),
+            const Text(
+              'Mantén visible la notificación de Centinela. Si reinicias el '
+              'teléfono o fuerzas el cierre, abre la app para reactivar la '
+              'protección.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: Paleta.textoSecundario),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Centinela v1.0',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: Paleta.textoSecundario),
+            ),
+          ],
         ),
       ),
     );
@@ -470,29 +567,5 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _servicioEventos?.cancel();
     _incidentesEventos?.cancel();
     super.dispose();
-  }
-
-  Widget _botonMenu({
-    required IconData icono,
-    required String titulo,
-    required String subtitulo,
-    required VoidCallback onTap,
-  }) {
-    return Card(
-      elevation: 3,
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: Colors.red,
-          child: Icon(icono, color: Colors.white),
-        ),
-        title: Text(
-          titulo,
-          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-        ),
-        subtitle: Text(subtitulo),
-        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-        onTap: onTap,
-      ),
-    );
   }
 }

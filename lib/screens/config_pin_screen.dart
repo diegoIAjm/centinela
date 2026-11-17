@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/pin_service.dart';
+import '../tema.dart';
+import '../widgets/ui.dart';
 
 class ConfigPinScreen extends StatefulWidget {
   const ConfigPinScreen({super.key});
@@ -9,10 +11,12 @@ class ConfigPinScreen extends StatefulWidget {
 }
 
 class _ConfigPinScreenState extends State<ConfigPinScreen> {
+  final _form = GlobalKey<FormState>();
   final _pinRealCtrl = TextEditingController();
   final _pinFalsoCtrl = TextEditingController();
   final _pinService = PinService();
   bool _cargando = false;
+  bool _mostrar = false;
 
   @override
   void initState() {
@@ -27,145 +31,130 @@ class _ConfigPinScreenState extends State<ConfigPinScreen> {
     if (falso != null) _pinFalsoCtrl.text = falso;
   }
 
+  String? _validarPin(String? v) {
+    final pin = v?.trim() ?? '';
+    if (!RegExp(r'^\d{4}$').hasMatch(pin)) return 'Debe tener 4 números';
+    return null;
+  }
+
   Future<void> _guardar() async {
+    if (!_form.currentState!.validate()) return;
     final real = _pinRealCtrl.text.trim();
     final falso = _pinFalsoCtrl.text.trim();
-
-    // Validaciones
-    if (real.length != 4 || falso.length != 4) {
-      _mostrarMensaje('Ambos PINs deben tener exactamente 4 dígitos');
-      return;
-    }
-    if (!RegExp(r'^\d{4}$').hasMatch(real) ||
-        !RegExp(r'^\d{4}$').hasMatch(falso)) {
-      _mostrarMensaje('Los PINs solo deben contener números');
-      return;
-    }
     if (real == falso) {
-      _mostrarMensaje('El PIN real y el PIN falso NO pueden ser iguales');
+      mostrarMensaje(
+        context,
+        'El PIN real y el PIN de coacción deben ser distintos',
+        tipo: TipoAviso.peligro,
+      );
       return;
     }
 
     setState(() => _cargando = true);
     await _pinService.guardarPines(real, falso);
+    if (!mounted) return;
     setState(() => _cargando = false);
-
-    if (mounted) {
-      _mostrarMensaje('PINs guardados correctamente', esError: false);
-      Navigator.pop(context);
-    }
+    mostrarMensaje(context, 'PIN guardados', tipo: TipoAviso.exito);
+    Navigator.pop(context);
   }
 
-  void _mostrarMensaje(String msg, {bool esError = true}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: esError ? Colors.red : Colors.green,
-      ),
-    );
-  }
+  Widget _campoPin(TextEditingController c, String etiqueta) => TextFormField(
+    controller: c,
+    keyboardType: TextInputType.number,
+    maxLength: 4,
+    obscureText: !_mostrar,
+    style: const TextStyle(fontSize: 22, letterSpacing: 8),
+    decoration: InputDecoration(labelText: etiqueta, counterText: ''),
+    validator: _validarPin,
+  );
+
+  Widget _explicacion(IconData icono, String titulo, String texto) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icono, color: Paleta.marino),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(titulo, style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 2),
+              Text(texto),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Configurar PINs'),
-        backgroundColor: Colors.red,
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
+      appBar: AppBar(title: const Text('PIN de seguridad')),
+      body: Form(
+        key: _form,
         child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
           children: [
-            const Card(
-              color: Color(0xFFFFEBEE),
+            Card(
               child: Padding(
-                padding: EdgeInsets.all(12),
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'PIN Real',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
+                    _explicacion(
+                      Icons.lock_open,
+                      'PIN real',
+                      'Detiene la alarma y cancela el envío. Úsalo solo cuando '
+                          'estés a salvo.',
                     ),
-                    SizedBox(height: 4),
-                    Text(
-                      'Este PIN detiene la alarma real y cancela todo. Úsalo solo cuando estés a salvo.',
-                      style: TextStyle(fontSize: 13),
+                    _explicacion(
+                      Icons.visibility_off_outlined,
+                      'PIN de coacción',
+                      'Úsalo si alguien te obliga a apagar la alarma. Parecerá '
+                          'que se detuvo, pero seguirá grabando y enviando tu '
+                          'ubicación.',
                     ),
                   ],
                 ),
               ),
             ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _pinRealCtrl,
-              keyboardType: TextInputType.number,
-              maxLength: 4,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'PIN Real (4 dígitos)',
-                border: OutlineInputBorder(),
-                counterText: '',
-              ),
-            ),
-            const SizedBox(height: 20),
-            const Card(
-              color: Color(0xFFFFF3E0),
+            const EncabezadoSeccion('Tus PIN'),
+            Card(
               child: Padding(
-                padding: EdgeInsets.all(12),
+                padding: const EdgeInsets.all(16),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      'PIN Falso (Coacción)',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
-                    ),
-                    SizedBox(height: 4),
-                    Text(
-                      'Úsalo si alguien te obliga a apagar la app. Parecerá que se cerró, pero seguirá grabando y enviando tu ubicación.',
-                      style: TextStyle(fontSize: 13),
+                    _campoPin(_pinRealCtrl, 'PIN real (4 números)'),
+                    const SizedBox(height: 14),
+                    _campoPin(_pinFalsoCtrl, 'PIN de coacción (4 números)'),
+                    const SizedBox(height: 4),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Mostrar los números'),
+                      value: _mostrar,
+                      onChanged: (v) => setState(() => _mostrar = v),
                     ),
                   ],
                 ),
               ),
             ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _pinFalsoCtrl,
-              keyboardType: TextInputType.number,
-              maxLength: 4,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'PIN Falso (4 dígitos)',
-                border: OutlineInputBorder(),
-                counterText: '',
-              ),
-            ),
-            const SizedBox(height: 30),
-            ElevatedButton.icon(
+            const SizedBox(height: 16),
+            FilledButton.icon(
               onPressed: _cargando ? null : _guardar,
               icon: _cargando
                   ? const SizedBox(
-                      width: 20,
-                      height: 20,
+                      width: 18,
+                      height: 18,
                       child: CircularProgressIndicator(
                         color: Colors.white,
                         strokeWidth: 2,
                       ),
                     )
-                  : const Icon(Icons.save),
-              label: Text(_cargando ? 'Guardando...' : 'Guardar PINs'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-              ),
+                  : const Icon(Icons.save_outlined),
+              label: Text(_cargando ? 'Guardando…' : 'Guardar PIN'),
             ),
           ],
         ),

@@ -10,6 +10,7 @@ import '../services/alerta_service.dart';
 import '../services/informe_service.dart';
 import 'datos_incidente_screen.dart';
 import 'historial_incidentes_screen.dart';
+import '../widgets/ui.dart';
 
 class DetalleIncidenteScreen extends StatefulWidget {
   final int id;
@@ -79,7 +80,7 @@ class _DetalleIncidenteScreenState extends State<DetalleIncidenteScreen> {
     if (!mounted) return;
     setState(() => _ocupado = false);
     _avisar(
-      error == null ? '✅ PDF subido' : '⚠️ No se pudo subir: $error',
+      error == null ? 'PDF subido' : 'No se pudo subir: $error',
       error == null ? Colors.green : Colors.orange,
     );
     _cargar();
@@ -117,8 +118,8 @@ class _DetalleIncidenteScreenState extends State<DetalleIncidenteScreen> {
       );
       _avisar(
         r.fallidos.isEmpty
-            ? '📨 Informe enviado a ${r.enviados} contacto(s)'
-            : '⚠️ Enviado a ${r.enviados}; falló: ${r.fallidos.join(', ')}',
+            ? 'Formulario enviado a ${r.enviados} contacto(s)'
+            : 'Enviado a ${r.enviados}; falló: ${r.fallidos.join(', ')}',
         r.fallidos.isEmpty ? Colors.green : Colors.orange,
       );
     } catch (e) {
@@ -130,9 +131,15 @@ class _DetalleIncidenteScreenState extends State<DetalleIncidenteScreen> {
 
   void _avisar(String texto, Color color) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
+    mostrarMensaje(
       context,
-    ).showSnackBar(SnackBar(content: Text(texto), backgroundColor: color));
+      texto,
+      tipo: color == Colors.green
+          ? TipoAviso.exito
+          : color == Colors.orange
+          ? TipoAviso.aviso
+          : TipoAviso.peligro,
+    );
   }
 
   @override
@@ -145,92 +152,119 @@ class _DetalleIncidenteScreenState extends State<DetalleIncidenteScreen> {
           : AbsorbPointer(
               absorbing: _ocupado,
               child: ListView(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
                 children: [
                   if (_ocupado) const LinearProgressIndicator(),
-                  ListTile(
-                    leading: const Icon(Icons.event),
-                    title: const Text('Fecha y hora'),
-                    subtitle: Text(formatearFecha(i.fecha)),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            children: [
+                              IconoEstado(i.estado),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  formatearFecha(i.fecha),
+                                  style: Theme.of(context).textTheme.titleLarge,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: EtiquetaEstado(i.estado),
+                          ),
+                          const SizedBox(height: 16),
+                          FilledButton.icon(
+                            onPressed: _editar,
+                            icon: const Icon(Icons.edit_outlined),
+                            label: Text(
+                              i.estado == EstadoInforme.pendiente
+                                  ? 'Completar formulario de denuncia'
+                                  : 'Editar formulario de denuncia',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                  ListTile(
-                    leading: const Icon(Icons.place),
-                    title: const Text('Ubicación'),
-                    subtitle: Text(ubicacionCorta(i)),
-                    trailing: i.linkMaps == null
-                        ? null
-                        : const Icon(Icons.open_in_new),
-                    onTap: i.linkMaps == null
-                        ? null
-                        : () => _abrir(i.linkMaps!),
-                  ),
+                  const EncabezadoSeccion('Datos de la alarma'),
+                  GrupoOpciones([
+                    ListTile(
+                      leading: const Icon(Icons.event_outlined),
+                      title: const Text('Fecha y hora'),
+                      subtitle: Text(formatearFecha(i.fecha)),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.place_outlined),
+                      title: const Text('Ubicación'),
+                      subtitle: Text(ubicacionCorta(i)),
+                      trailing: i.linkMaps == null
+                          ? null
+                          : const Icon(Icons.open_in_new, size: 20),
+                      onTap: i.linkMaps == null
+                          ? null
+                          : () => _abrir(i.linkMaps!),
+                    ),
+                  ]),
+                  const EncabezadoSeccion('Grabaciones de audio'),
                   if (i.urlsAudio.isEmpty)
-                    const ListTile(
-                      leading: Icon(Icons.headset_off),
-                      title: Text('Audio'),
-                      subtitle: Text('No se subió ningún audio'),
+                    const Aviso(
+                      tipo: TipoAviso.info,
+                      titulo: 'No se subió ninguna grabación',
                     )
                   else
-                    for (var n = 0; n < i.urlsAudio.length; n++)
-                      ListTile(
-                        leading: const Icon(Icons.headphones),
-                        title: Text(
-                          i.urlsAudio.length == 1
-                              ? '🎧 Ver audio'
-                              : '🎧 Ver audio ${n + 1}',
+                    GrupoOpciones([
+                      for (var n = 0; n < i.urlsAudio.length; n++)
+                        ListTile(
+                          leading: const Icon(Icons.graphic_eq),
+                          title: Text('Grabación N.º ${n + 1}'),
+                          subtitle: Text(
+                            i.urlsAudio[n],
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: const Icon(Icons.open_in_new, size: 20),
+                          onTap: () => _abrir(i.urlsAudio[n]),
                         ),
-                        subtitle: Text(
-                          i.urlsAudio[n],
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: const Icon(Icons.open_in_new),
-                        onTap: () => _abrir(i.urlsAudio[n]),
+                    ]),
+                  if (i.estado != EstadoInforme.pendiente) ...[
+                    const EncabezadoSeccion('Formulario en PDF'),
+                    if (i.estado == EstadoInforme.sinSubir)
+                      Aviso(
+                        tipo: TipoAviso.aviso,
+                        titulo: 'El PDF no se subió a internet',
+                        texto:
+                            'Está guardado en el teléfono. Súbelo para poder '
+                            'enviarlo a tus contactos.',
+                        accion: 'Reintentar subida',
+                        onTap: _reintentarSubida,
                       ),
-                  ListTile(
-                    leading: IconoEstado(i.estado),
-                    title: const Text('Estado del informe'),
-                    subtitle: Text(textoEstado(i.estado)),
-                  ),
-                  const Divider(),
-                  FilledButton.icon(
-                    onPressed: _editar,
-                    icon: const Icon(Icons.edit),
-                    label: Text(
-                      i.estado == EstadoInforme.pendiente
-                          ? '✏️ Completar informe'
-                          : '✏️ Editar informe',
-                    ),
-                  ),
-                  if (i.estado == EstadoInforme.sinSubir) ...[
-                    const SizedBox(height: 8),
-                    OutlinedButton.icon(
-                      onPressed: _reintentarSubida,
-                      icon: const Icon(Icons.cloud_upload),
-                      label: const Text('☁️ Reintentar subida del PDF'),
-                    ),
-                  ],
-                  if (_hayPdfLocal) ...[
-                    const SizedBox(height: 8),
-                    OutlinedButton.icon(
-                      onPressed: _verPdf,
-                      icon: const Icon(Icons.picture_as_pdf),
-                      label: const Text('📄 Ver PDF'),
-                    ),
-                    const SizedBox(height: 8),
-                    OutlinedButton.icon(
-                      onPressed: _compartirPdf,
-                      icon: const Icon(Icons.share),
-                      label: const Text('📤 Compartir PDF'),
-                    ),
-                  ],
-                  if (i.urlPdf != null) ...[
-                    const SizedBox(height: 8),
-                    OutlinedButton.icon(
-                      onPressed: _enviarAContactos,
-                      icon: const Icon(Icons.sms),
-                      label: const Text('📨 Enviar informe a contactos'),
-                    ),
+                    GrupoOpciones([
+                      if (_hayPdfLocal) ...[
+                        ListTile(
+                          leading: const Icon(Icons.picture_as_pdf_outlined),
+                          title: const Text('Ver PDF'),
+                          onTap: _verPdf,
+                        ),
+                        ListTile(
+                          leading: const Icon(Icons.share_outlined),
+                          title: const Text('Compartir PDF'),
+                          onTap: _compartirPdf,
+                        ),
+                      ],
+                      if (i.urlPdf != null)
+                        ListTile(
+                          leading: const Icon(Icons.sms_outlined),
+                          title: const Text('Enviar a mis contactos'),
+                          subtitle: const Text('Envía el enlace por SMS'),
+                          onTap: _enviarAContactos,
+                        ),
+                    ]),
                   ],
                 ],
               ),

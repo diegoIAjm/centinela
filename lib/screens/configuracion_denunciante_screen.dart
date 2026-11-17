@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import '../models/formulario_denuncia.dart';
 import '../services/dictado_parser.dart';
 import '../services/informe_service.dart';
+import '../tema.dart';
 import '../widgets/dictado_sheet.dart';
+import '../widgets/ui.dart';
 
 /// Datos permanentes de la víctima para el informe de denuncia.
 class ConfiguracionDenuncianteScreen extends StatefulWidget {
@@ -21,7 +24,13 @@ class _ConfiguracionDenuncianteScreenState
   final _domicilio = TextEditingController();
   final _telefono = TextEditingController();
   final _ocupacion = TextEditingController();
+  final _nacionalidad = TextEditingController();
+  final _lugarTrabajo = TextEditingController();
+  final _correo = TextEditingController();
   String _ciExt = 'LP';
+  String? _sexo;
+  String? _estadoCivil;
+  bool _reservarContacto = false;
   DateTime? _fechaNacimiento;
   bool _cargando = true;
 
@@ -41,6 +50,14 @@ class _ConfiguracionDenuncianteScreenState
       _domicilio.text = d['domicilio'] as String? ?? '';
       _telefono.text = d['telefono'] as String? ?? '';
       _ocupacion.text = d['ocupacion'] as String? ?? '';
+      _nacionalidad.text = d['nacionalidad'] as String? ?? 'Boliviana';
+      _lugarTrabajo.text = d['lugar_trabajo'] as String? ?? '';
+      _correo.text = d['correo'] as String? ?? '';
+      _sexo = sexos.contains(d['sexo']) ? d['sexo'] as String : null;
+      _estadoCivil = estadosCiviles.contains(d['estado_civil'])
+          ? d['estado_civil'] as String
+          : null;
+      _reservarContacto = d['reservar_contacto'] == true;
       _fechaNacimiento = DateTime.tryParse(
         d['fecha_nacimiento'] as String? ?? '',
       );
@@ -51,7 +68,7 @@ class _ConfiguracionDenuncianteScreenState
   Future<void> _dictar() async {
     final texto = await dictar(
       context,
-      titulo: '🎤 Dicta tus datos',
+      titulo: 'Dicta tus datos',
       ayuda:
           'Ejemplo: "Mi nombre es María Pérez, mi carnet es 12345678 LP, '
           'nací el 5 de marzo de 1990, mi domicilio es calle Sucre 45, '
@@ -109,20 +126,58 @@ class _ConfiguracionDenuncianteScreenState
       'domicilio': _domicilio.text.trim(),
       'telefono': _telefono.text.trim(),
       'ocupacion': _ocupacion.text.trim(),
+      'sexo': _sexo,
+      'estado_civil': _estadoCivil,
+      'nacionalidad': _nacionalidad.text.trim(),
+      'lugar_trabajo': _lugarTrabajo.text.trim(),
+      'correo': _correo.text.trim(),
+      'reservar_contacto': _reservarContacto,
     });
     if (!mounted) return;
-    _avisar('✅ Datos guardados', Colors.green);
+    _avisar('Datos guardados', Colors.green);
     Navigator.pop(context, true);
   }
 
   void _avisar(String texto, Color color) {
-    ScaffoldMessenger.of(
+    mostrarMensaje(
       context,
-    ).showSnackBar(SnackBar(content: Text(texto), backgroundColor: color));
+      texto,
+      tipo: color == Colors.green ? TipoAviso.exito : TipoAviso.aviso,
+    );
   }
 
   String? _obligatorio(String? v) =>
       v == null || v.trim().isEmpty ? 'Obligatorio' : null;
+
+  Widget _bloque(List<Widget> campos) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var n = 0; n < campos.length; n++) ...[
+            if (n > 0) const SizedBox(height: 14),
+            campos[n],
+          ],
+        ],
+      ),
+    ),
+  );
+
+  Widget _lista(
+    String etiqueta,
+    String? valor,
+    List<String> opciones,
+    ValueChanged<String?> alCambiar,
+  ) => DropdownButtonFormField<String>(
+    key: ValueKey('$etiqueta $valor'),
+    initialValue: valor,
+    decoration: InputDecoration(labelText: etiqueta),
+    items: [
+      for (final v in opciones) DropdownMenuItem(value: v, child: Text(v)),
+    ],
+    onChanged: alCambiar,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -134,93 +189,158 @@ class _ConfiguracionDenuncianteScreenState
           : Form(
               key: _form,
               child: ListView(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
                 children: [
-                  const Text(
-                    'Se usan para llenar el informe de denuncia de cada '
-                    'incidente. Solo quedan guardados en este teléfono y en '
-                    'los informes que generes.',
-                    style: TextStyle(color: Colors.grey),
+                  const Aviso(
+                    tipo: TipoAviso.info,
+                    titulo: 'Para tus formularios de denuncia',
+                    texto:
+                        'Se guardan solo en este teléfono y en los formularios '
+                        'que generes. Los campos con * son obligatorios.',
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   OutlinedButton.icon(
                     onPressed: _dictar,
-                    icon: const Icon(Icons.mic),
-                    label: const Text('🎤 Dictar mis datos'),
+                    icon: const Icon(Icons.mic_none),
+                    label: const Text('Dictar mis datos'),
                   ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _nombre,
-                    decoration: const InputDecoration(
-                      labelText: 'Nombre completo *',
+                  const EncabezadoSeccion('Identificación'),
+                  _bloque([
+                    TextFormField(
+                      controller: _nombre,
+                      decoration: const InputDecoration(
+                        labelText: 'Nombre completo *',
+                      ),
+                      textCapitalization: TextCapitalization.words,
+                      validator: _obligatorio,
                     ),
-                    textCapitalization: TextCapitalization.words,
-                    validator: _obligatorio,
-                  ),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: TextFormField(
-                          controller: _ci,
-                          decoration: const InputDecoration(
-                            labelText: 'Carnet de identidad *',
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: _ci,
+                            decoration: const InputDecoration(
+                              labelText: 'Carnet de identidad *',
+                            ),
+                            keyboardType: TextInputType.number,
+                            validator: _obligatorio,
                           ),
-                          keyboardType: TextInputType.number,
-                          validator: _obligatorio,
+                        ),
+                        const SizedBox(width: 12),
+                        SizedBox(
+                          width: 104,
+                          child: DropdownButtonFormField<String>(
+                            // La clave lo reconstruye si el dictado cambia la ext.
+                            key: ValueKey(_ciExt),
+                            initialValue: _ciExt,
+                            decoration: const InputDecoration(
+                              labelText: 'Ext.',
+                            ),
+                            items: [
+                              for (final e in extensionesCi)
+                                DropdownMenuItem(value: e, child: Text(e)),
+                            ],
+                            onChanged: (v) => setState(() => _ciExt = v!),
+                          ),
+                        ),
+                      ],
+                    ),
+                    InkWell(
+                      onTap: _elegirFecha,
+                      borderRadius: BorderRadius.circular(10),
+                      child: InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: 'Fecha de nacimiento',
+                          suffixIcon: Icon(Icons.calendar_today_outlined),
+                        ),
+                        child: Text(
+                          f == null
+                              ? 'Toca para elegir'
+                              : formatearFechaNacimiento(f.toIso8601String()),
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: f == null
+                                ? Paleta.textoSecundario
+                                : Paleta.texto,
+                          ),
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      SizedBox(
-                        width: 90,
-                        child: DropdownButtonFormField<String>(
-                          // La clave lo reconstruye si el dictado cambia la ext.
-                          key: ValueKey(_ciExt),
-                          initialValue: _ciExt,
-                          decoration: const InputDecoration(labelText: 'Ext.'),
-                          items: [
-                            for (final e in extensionesCi)
-                              DropdownMenuItem(value: e, child: Text(e)),
-                          ],
-                          onChanged: (v) => setState(() => _ciExt = v!),
-                        ),
+                    ),
+                    _lista(
+                      'Sexo',
+                      _sexo,
+                      sexos,
+                      (v) => setState(() => _sexo = v),
+                    ),
+                    _lista(
+                      'Estado civil',
+                      _estadoCivil,
+                      estadosCiviles,
+                      (v) => setState(() => _estadoCivil = v),
+                    ),
+                    TextFormField(
+                      controller: _nacionalidad,
+                      decoration: const InputDecoration(
+                        labelText: 'Nacionalidad',
                       ),
-                    ],
-                  ),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Fecha de nacimiento'),
-                    subtitle: Text(
-                      f == null
-                          ? 'Toca para elegir'
-                          : formatearFechaNacimiento(f.toIso8601String()),
                     ),
-                    trailing: const Icon(Icons.calendar_today),
-                    onTap: _elegirFecha,
-                  ),
-                  TextFormField(
-                    controller: _domicilio,
-                    decoration: const InputDecoration(labelText: 'Domicilio *'),
-                    maxLines: 2,
-                    validator: _obligatorio,
-                  ),
-                  TextFormField(
-                    controller: _telefono,
-                    decoration: const InputDecoration(labelText: 'Teléfono *'),
-                    keyboardType: TextInputType.phone,
-                    validator: _obligatorio,
-                  ),
-                  TextFormField(
-                    controller: _ocupacion,
-                    decoration: const InputDecoration(
-                      labelText: 'Ocupación (opcional)',
+                  ]),
+                  const EncabezadoSeccion('Domicilio y contacto'),
+                  _bloque([
+                    TextFormField(
+                      controller: _domicilio,
+                      decoration: const InputDecoration(
+                        labelText: 'Domicilio *',
+                      ),
+                      maxLines: 2,
+                      validator: _obligatorio,
                     ),
-                  ),
-                  const SizedBox(height: 24),
+                    TextFormField(
+                      controller: _telefono,
+                      decoration: const InputDecoration(
+                        labelText: 'Teléfono *',
+                      ),
+                      keyboardType: TextInputType.phone,
+                      validator: _obligatorio,
+                    ),
+                    TextFormField(
+                      controller: _correo,
+                      decoration: const InputDecoration(
+                        labelText: 'Correo electrónico',
+                      ),
+                      keyboardType: TextInputType.emailAddress,
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Ocultar teléfono y correo'),
+                      subtitle: const Text(
+                        'En el formulario aparecerán como "Dato reservado".',
+                      ),
+                      value: _reservarContacto,
+                      onChanged: (v) => setState(() => _reservarContacto = v),
+                    ),
+                  ]),
+                  const EncabezadoSeccion('Trabajo'),
+                  _bloque([
+                    TextFormField(
+                      controller: _ocupacion,
+                      decoration: const InputDecoration(
+                        labelText: 'Profesión u ocupación',
+                      ),
+                    ),
+                    TextFormField(
+                      controller: _lugarTrabajo,
+                      decoration: const InputDecoration(
+                        labelText: 'Lugar de trabajo',
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: 20),
                   FilledButton.icon(
                     onPressed: _guardar,
-                    icon: const Icon(Icons.save),
-                    label: const Text('💾 Guardar'),
+                    icon: const Icon(Icons.save_outlined),
+                    label: const Text('Guardar mis datos'),
                   ),
                 ],
               ),
@@ -235,6 +355,9 @@ class _ConfiguracionDenuncianteScreenState
     _domicilio.dispose();
     _telefono.dispose();
     _ocupacion.dispose();
+    _nacionalidad.dispose();
+    _lugarTrabajo.dispose();
+    _correo.dispose();
     super.dispose();
   }
 }

@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'formulario_denuncia.dart';
+
 enum EstadoInforme { pendiente, sinSubir, completo }
 
 /// Una alarma registrada y, si la víctima lo completó, su informe.
@@ -28,6 +30,9 @@ class Incidente {
   final String? testigos;
   final String? observaciones;
 
+  /// Resto del formulario de denuncia (claves en [CampoFormulario]).
+  final Map<String, String> formulario;
+
   const Incidente({
     this.id,
     required this.fecha,
@@ -46,6 +51,7 @@ class Incidente {
     this.relato,
     this.testigos,
     this.observaciones,
+    this.formulario = const {},
   });
 
   String? get urlAudio => urlsAudio.isEmpty ? null : urlsAudio.first;
@@ -81,7 +87,22 @@ class Incidente {
     relato: m['relato'] as String?,
     testigos: m['testigos'] as String?,
     observaciones: m['observaciones'] as String?,
+    formulario: m['formulario'] == null
+        ? const {}
+        : Map<String, String>.from(
+            jsonDecode(m['formulario'] as String) as Map,
+          ),
   );
+
+  /// Valor del formulario, o null si está vacío.
+  String? campo(String clave) {
+    final v = formulario[clave]?.trim();
+    return v == null || v.isEmpty ? null : v;
+  }
+
+  /// Por defecto quien denuncia es la víctima.
+  bool get victimaEsDenunciante =>
+      formulario[CampoFormulario.victimaEsDenunciante] != 'no';
 
   /// Claves que la pantalla de datos del incidente puede escribir.
   static const camposInforme = [

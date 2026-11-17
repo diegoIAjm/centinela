@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../models/contacto.dart';
 import '../services/database_service.dart';
+import '../tema.dart';
+import '../widgets/ui.dart';
 
 class ContactosScreen extends StatefulWidget {
   const ContactosScreen({super.key});
@@ -11,7 +13,8 @@ class ContactosScreen extends StatefulWidget {
 
 class _ContactosScreenState extends State<ContactosScreen> {
   final _db = DatabaseService();
-  List<Contacto> _contactos = [];
+  final _form = GlobalKey<FormState>();
+  List<Contacto>? _contactos;
   final _nombreCtrl = TextEditingController();
   final _telefonoCtrl = TextEditingController();
 
@@ -23,91 +26,164 @@ class _ContactosScreenState extends State<ContactosScreen> {
 
   Future<void> _cargar() async {
     final lista = await _db.obtenerContactos();
-    setState(() => _contactos = lista);
+    if (mounted) setState(() => _contactos = lista);
   }
 
   Future<void> _agregar() async {
-    final nombre = _nombreCtrl.text.trim();
-    final telefono = _telefonoCtrl.text.trim();
-    if (nombre.isEmpty || telefono.isEmpty) return;
-
-    await _db.insertarContacto(Contacto(nombre: nombre, telefono: telefono));
+    if (!_form.currentState!.validate()) return;
+    await _db.insertarContacto(
+      Contacto(
+        nombre: _nombreCtrl.text.trim(),
+        telefono: _telefonoCtrl.text.replaceAll(' ', '').trim(),
+      ),
+    );
     _nombreCtrl.clear();
     _telefonoCtrl.clear();
+    if (!mounted) return;
+    FocusScope.of(context).unfocus();
+    mostrarMensaje(context, 'Contacto agregado', tipo: TipoAviso.exito);
     _cargar();
   }
 
-  Future<void> _eliminar(int id) async {
-    await _db.eliminarContacto(id);
+  Future<void> _eliminar(Contacto c) async {
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (d) => AlertDialog(
+        title: const Text('Eliminar contacto'),
+        content: Text(
+          '${c.nombre} dejará de recibir tus alertas de emergencia.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(d, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Paleta.peligro),
+            onPressed: () => Navigator.pop(d, true),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmar != true) return;
+    await _db.eliminarContacto(c.id!);
     _cargar();
+  }
+
+  String? _validarTelefono(String? v) {
+    final t = v?.trim() ?? '';
+    if (t.isEmpty) return 'Ingresa un número';
+    if (!RegExp(r'^\+?\d{7,15}$').hasMatch(t.replaceAll(' ', ''))) {
+      return 'Solo números, de 7 a 15 dígitos. Ej.: +59170000000';
+    }
+    return null;
   }
 
   @override
   Widget build(BuildContext context) {
+    final lista = _contactos;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Contactos de Emergencia'),
-        backgroundColor: Colors.red,
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            TextField(
-              controller: _nombreCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Nombre',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _telefonoCtrl,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                labelText: 'Teléfono (con código de país)',
-                hintText: '+59170000000',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 10),
-            ElevatedButton.icon(
-              onPressed: _agregar,
-              icon: const Icon(Icons.add),
-              label: const Text('Agregar contacto'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-              ),
-            ),
-            const Divider(height: 30),
-            Expanded(
-              child: _contactos.isEmpty
-                  ? const Center(child: Text('No hay contactos guardados'))
-                  : ListView.builder(
-                      itemCount: _contactos.length,
-                      itemBuilder: (context, index) {
-                        final c = _contactos[index];
-                        return Card(
-                          child: ListTile(
-                            leading: const CircleAvatar(
-                              backgroundColor: Colors.red,
-                              child: Icon(Icons.person, color: Colors.white),
-                            ),
-                            title: Text(c.nombre),
-                            subtitle: Text(c.telefono),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.delete, color: Colors.red),
-                              onPressed: () => _eliminar(c.id!),
-                            ),
-                          ),
-                        );
-                      },
+      appBar: AppBar(title: const Text('Contactos de emergencia')),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+        children: [
+          const Aviso(
+            tipo: TipoAviso.info,
+            titulo: 'Quiénes reciben tu alerta',
+            texto:
+                'Cuando se active la alarma, cada contacto recibirá por SMS '
+                'tu ubicación y los enlaces a las grabaciones.',
+          ),
+          const EncabezadoSeccion('Agregar contacto'),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Form(
+                key: _form,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextFormField(
+                      controller: _nombreCtrl,
+                      decoration: const InputDecoration(labelText: 'Nombre'),
+                      textCapitalization: TextCapitalization.words,
+                      validator: (v) => v == null || v.trim().isEmpty
+                          ? 'Ingresa un nombre'
+                          : null,
                     ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _telefonoCtrl,
+                      keyboardType: TextInputType.phone,
+                      decoration: const InputDecoration(
+                        labelText: 'Teléfono con código de país',
+                        hintText: '+59170000000',
+                      ),
+                      validator: _validarTelefono,
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: _agregar,
+                      icon: const Icon(Icons.person_add_alt_1),
+                      label: const Text('Agregar contacto'),
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ],
-        ),
+          ),
+          EncabezadoSeccion(
+            lista == null || lista.isEmpty
+                ? 'Contactos guardados'
+                : 'Contactos guardados (${lista.length})',
+          ),
+          if (lista == null)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (lista.isEmpty)
+            const EstadoVacio(
+              icono: Icons.group_outlined,
+              titulo: 'Aún no hay contactos',
+              texto: 'Agrega al menos una persona de confianza.',
+            )
+          else
+            GrupoOpciones([
+              for (final c in lista)
+                ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: Paleta.infoFondo,
+                    foregroundColor: Paleta.marino,
+                    child: Text(
+                      c.nombre.trim().isEmpty
+                          ? '?'
+                          : c.nombre.trim()[0].toUpperCase(),
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  title: Text(c.nombre),
+                  subtitle: Text(c.telefono),
+                  trailing: IconButton(
+                    tooltip: 'Eliminar ${c.nombre}',
+                    icon: const Icon(
+                      Icons.delete_outline,
+                      color: Paleta.peligro,
+                    ),
+                    onPressed: () => _eliminar(c),
+                  ),
+                ),
+            ]),
+        ],
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _nombreCtrl.dispose();
+    _telefonoCtrl.dispose();
+    super.dispose();
   }
 }

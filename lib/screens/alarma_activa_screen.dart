@@ -65,11 +65,11 @@ class _AlarmaActivaScreenState extends State<AlarmaActivaScreen> {
 
     if (tipo == 'real') {
       FlutterBackgroundService().invoke('cancelarAlarma');
-      _salir('✅ Alarma cancelada');
+      _salir('Alarma cancelada');
     } else if (tipo == 'falso') {
       // Misma UI que el PIN real; en segundo plano la alarma sigue.
       FlutterBackgroundService().invoke('falsaAlarma');
-      _salir('✅ Alarma cancelada');
+      _salir('Alarma cancelada');
     } else {
       setState(() => _mensaje = 'PIN incorrecto');
       _pinCtrl.clear();
@@ -91,17 +91,27 @@ class _AlarmaActivaScreenState extends State<AlarmaActivaScreen> {
       child: ultimos.isEmpty
           ? const Text(
               'Esperando al servicio…',
-              style: TextStyle(color: Colors.white70, fontSize: 12),
+              style: TextStyle(color: Colors.white70, fontSize: 13),
             )
           : Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                const Text(
+                  'ACCIONES EN CURSO',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+                const SizedBox(height: 6),
                 for (final linea in ultimos)
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 2),
                     child: Text(
                       linea,
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
                     ),
                   ),
               ],
@@ -111,7 +121,7 @@ class _AlarmaActivaScreenState extends State<AlarmaActivaScreen> {
 
   void _estoyASalvo() {
     FlutterBackgroundService().invoke('estoyASalvo');
-    _salir('✅ Alarma detenida. Avisamos a tus contactos que estás a salvo.');
+    _salir('Alarma detenida. Avisamos a tus contactos que estás a salvo.');
   }
 
   void _salir(String mensaje) {
@@ -136,6 +146,7 @@ class _AlarmaActivaScreenState extends State<AlarmaActivaScreen> {
               padding: const EdgeInsets.all(24),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const Icon(
                     Icons.warning_amber_rounded,
@@ -145,6 +156,7 @@ class _AlarmaActivaScreenState extends State<AlarmaActivaScreen> {
                   const SizedBox(height: 20),
                   const Text(
                     'ALARMA ACTIVA',
+                    textAlign: TextAlign.center,
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 32,
@@ -178,6 +190,7 @@ class _AlarmaActivaScreenState extends State<AlarmaActivaScreen> {
                   ] else ...[
                     const Text(
                       'Ingresa tu PIN',
+                      textAlign: TextAlign.center,
                       style: TextStyle(color: Colors.white, fontSize: 18),
                     ),
                     const SizedBox(height: 20),
@@ -208,6 +221,7 @@ class _AlarmaActivaScreenState extends State<AlarmaActivaScreen> {
                     if (_mensaje.isNotEmpty)
                       Text(
                         _mensaje,
+                        textAlign: TextAlign.center,
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 14,

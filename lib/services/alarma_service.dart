@@ -9,6 +9,7 @@ import 'sensor_service.dart';
 import 'cloudinary_service.dart';
 import 'alarma_sonido_service.dart';
 import 'informe_service.dart';
+import 'voice_service.dart';
 
 enum EstadoAlarma { inactiva, activa, falsaAlarma, cancelada }
 
@@ -34,6 +35,21 @@ class AlarmaService {
   final _alerta = AlertaService();
   final _sensores = SensorService();
   final _sonido = AlarmaSonidoService();
+  final _voz = VoiceService();
+  // FIX AUDITORÍA: el servicio enlaza la cancelación del dictado de otro isolate.
+  Future<void> Function()? cancelarDictado;
+
+  Future<void> _intentarVoz(
+    String accion,
+    Future<void> Function() tarea,
+  ) async {
+    try {
+      await tarea().timeout(const Duration(seconds: 12));
+    } catch (e) {
+      debugPrint('🚨 alarma: fallo de voz al $accion; continúa emergencia: $e');
+    }
+  }
+
   EstadoAlarma _estado = EstadoAlarma.inactiva;
   EstadoAlarma get estado => _estado;
   bool get sensoresPausados => _sensores.pausado;
@@ -80,13 +96,26 @@ class AlarmaService {
 
   Future<void> iniciarVigilancia() async {
     _sensores.onAmenazaDetectada = (_) => unawaited(activarAlarma());
+    _voz.onAmenazaVoz = (motivo) {
+      if (_estado == EstadoAlarma.inactiva && !_cancelando) {
+        debugPrint('🎤 Activación de alarma: $motivo');
+        unawaited(activarAlarma(motivo: motivo));
+      }
+    };
     await _sensores.iniciar();
   }
 
-  Future<void> pausarSensores() async => _sensores.pausar();
-  void reanudarSensores() => _sensores.reanudar();
+  Future<void> pausarSensores() async {
+    _sensores.pausar();
+    await _intentarVoz('pausar', _voz.pausar);
+  }
 
-  Future<void> activarAlarma() async {
+  void reanudarSensores() {
+    _sensores.reanudar();
+    unawaited(_intentarVoz('reanudar', _voz.reanudar));
+  }
+
+  Future<void> activarAlarma({String? motivo}) async {
     if (_cancelando || _estado != EstadoAlarma.inactiva) return;
     final sesion = ++_sesion;
     final incidente = _incidente = _Incidente(
@@ -102,7 +131,7 @@ class AlarmaService {
     final fin = Completer<void>();
     _fin = fin;
     bitacora.clear();
-    _registrar('🚨 Alarma activada');
+    _registrar('🚨 Alarma activada${motivo == null ? '' : ' ($motivo)'}');
     _cambiar(EstadoAlarma.activa);
     // Con permiso "Mostrar sobre otras apps" se abre directo aunque la app
     // esté cerrada; si no, queda la notificación de pantalla completa.
@@ -112,16 +141,33 @@ class AlarmaService {
   }
 
   Future<void> _prepararCaptura(_Incidente incidente, Future<void> fin) async {
+    // FIX AUDITORÍA: SMS/ubicación/sirena avanzan mientras se libera el micro.
+    // record espera cancelación acotada de AMBOS reconocedores para no competir.
+    final microfono = Future.wait([
+      _intentarVoz('reservar micrófono', _voz.reservarMicrofonoParaGrabacion),
+      _intentarVoz(
+        'cancelar dictado',
+        () async => await cancelarDictado?.call(),
+      ),
+    ]);
+    final ubicacion = _ubicacion = _enviarUbicacion(incidente);
+    final sonido = () async {
+      try {
+        if (_estado == EstadoAlarma.activa) await _sonido.iniciar();
+        if (_estado != EstadoAlarma.activa) await _sonido.detener();
+      } catch (e) {
+        _fallo('No se pudo iniciar la sirena: $e');
+      }
+    }();
     try {
       await _sensores.detener();
+      await microfono;
       if (incidente.sesion != _sesion) return;
-      // Ubicación + SMS y grabación arrancan en paralelo.
-      final ubicacion = _ubicacion = _enviarUbicacion(incidente);
       _captura = _grabar(incidente, ubicacion, fin);
-      if (_estado == EstadoAlarma.activa) await _sonido.iniciar();
-      if (_estado != EstadoAlarma.activa) await _sonido.detener();
     } catch (e) {
       _fallo('No se pudo iniciar la alarma: $e');
+    } finally {
+      await sonido;
     }
   }
 
@@ -271,6 +317,10 @@ class AlarmaService {
     } finally {
       _cancelando = false;
     }
+    // FIX AUDITORÍA: el historial y el aviso de cierre no esperan al motor de voz.
+    unawaited(
+      _intentarVoz('liberar micrófono', _voz.liberarMicrofonoDeGrabacion),
+    );
     if (incidente == null) return;
     if (mensajeCierre != null) {
       unawaited(_avisarCierre(incidente, ubicacion, envios, mensajeCierre));
@@ -315,12 +365,21 @@ class AlarmaService {
   }
 
   Future<void> detener() async {
+    // FIX AUDITORÍA: impedir otra activación mientras se termina la captura.
+    final estabaCancelando = _cancelando;
+    _cancelando = true;
     ++_sesion;
     _fin?.complete();
     _fin = null;
-    await _arranque;
-    await _captura;
-    await _sensores.detener();
-    await _sonido.detener();
+    // FIX AUDITORÍA: terminar captura antes de intentar detener voz.
+    try {
+      await _arranque;
+      await _captura;
+      await _sensores.detener();
+      await _sonido.detener();
+    } finally {
+      await _intentarVoz('detener', _voz.detener);
+      _cancelando = estabaCancelando;
+    }
   }
 }

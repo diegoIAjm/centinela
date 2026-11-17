@@ -6,6 +6,7 @@ import 'package:flutter_background_service/flutter_background_service.dart';
 import 'alarma_service.dart';
 import 'informe_service.dart';
 import 'notificacion_alarma.dart';
+import 'voice_service.dart';
 
 const _canalNotificacion = 'centinela_vigilancia';
 const _idNotificacion = 7001;
@@ -76,12 +77,15 @@ void _iniciarServicio(ServiceInstance servicio) async {
   WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
   final alarma = AlarmaService();
+  final voz = VoiceService();
   bool listo = false;
   String? error;
   Timer? pausa;
   String? pausaEtiqueta;
   bool pausaIndefinida = false;
   Future<void> comandos = Future.value();
+  String? idDictado;
+  Completer<bool>? dictadoCancelado;
 
   // Con PIN falso la UI y la notificación deben verse como tras un PIN real.
   bool encubierto() => alarma.estado == EstadoAlarma.falsaAlarma;
@@ -96,6 +100,8 @@ void _iniciarServicio(ServiceInstance servicio) async {
       'pausaIndefinida': pausaIndefinida,
       'error': encubierto() ? null : error,
       'bitacora': encubierto() ? const <String>[] : alarma.bitacora,
+      'vozEstado': encubierto() ? null : voz.estado,
+      'vozError': encubierto() || !voz.conError ? null : voz.error,
     });
   }
 
@@ -103,7 +109,7 @@ void _iniciarServicio(ServiceInstance servicio) async {
     if (servicio is AndroidServiceInstance) {
       await servicio.setForegroundNotificationInfo(
         title: 'Centinela',
-        content: error != null && !encubierto()
+        content: (error != null || voz.conError) && !encubierto()
             ? 'Protección con incidencias. Abre la app.'
             : alarma.sensoresPausados
             ? 'Protección pausada'
@@ -124,6 +130,32 @@ void _iniciarServicio(ServiceInstance servicio) async {
         });
   }
 
+  // FIX AUDITORÍA: los ACK no pasan por la cola que está esperando cancelarlos.
+  servicio.on('dictadoCancelado').listen((datos) {
+    if (datos?['id'] == idDictado && dictadoCancelado?.isCompleted == false) {
+      dictadoCancelado!.complete(datos?['ok'] == true);
+    }
+  });
+  alarma.cancelarDictado = () async {
+    final id = idDictado;
+    if (id == null) return;
+    final confirmacion = dictadoCancelado = Completer<bool>();
+    servicio.invoke('cancelarDictado', {'id': id});
+    try {
+      final ok = await confirmacion.future.timeout(const Duration(seconds: 4));
+      if (!ok) debugPrint('📝 dictado: cancelación UI falló; continúa alarma');
+    } catch (e) {
+      debugPrint('📝 dictado: UI sin confirmación; continúa alarma: $e');
+    } finally {
+      dictadoCancelado = null;
+      if (idDictado == id) idDictado = null;
+    }
+  };
+  voz.onEstadoCambiado = () {
+    publicar();
+    unawaited(notificar());
+  };
+
   alarma.onEstadoCambiado = (estado) {
     publicar();
     // Full-screen intent: enciende la pantalla y abre la alarma aunque la
@@ -143,6 +175,47 @@ void _iniciarServicio(ServiceInstance servicio) async {
   alarma.onIncidenteFinalizado = (id) =>
       servicio.invoke('incidenteFinalizado', {'id': id});
   servicio.on('consultarEstado').listen((_) => publicar());
+  servicio
+      .on('configVozActualizada')
+      .listen((_) => ejecutar(voz.actualizarConfiguracion));
+  servicio
+      .on('reservarVozDictado')
+      .listen(
+        (datos) => ejecutar(() async {
+          final id = datos?['id'] as String?;
+          if (alarma.estado != EstadoAlarma.inactiva ||
+              idDictado != null ||
+              id == null) {
+            servicio.invoke('vozDictadoReservada', {
+              'id': datos?['id'],
+              'ok': false,
+            });
+            return;
+          }
+          idDictado = id;
+          try {
+            await voz.reservarParaDictado(true);
+          } catch (e) {
+            idDictado = null;
+            servicio.invoke('vozDictadoReservada', {'id': id, 'ok': false});
+            rethrow;
+          }
+          servicio.invoke('vozDictadoReservada', {
+            'id': datos?['id'],
+            'ok': idDictado == id && alarma.estado == EstadoAlarma.inactiva,
+          });
+        }),
+      );
+  servicio
+      .on('liberarVozDictado')
+      .listen(
+        (datos) => ejecutar(() async {
+          // FIX AUDITORÍA: una hoja antigua no libera la reserva de otra sesión.
+          if (datos?['id'] != idDictado && idDictado != null) return;
+          idDictado = null;
+          await voz.reservarParaDictado(false);
+        }),
+      );
   servicio.on('activarAlarma').listen((_) => ejecutar(alarma.activarAlarma));
   void cancelar(String mensajeCierre) => ejecutar(() async {
     error = null;
@@ -210,6 +283,12 @@ void _iniciarServicio(ServiceInstance servicio) async {
 
   try {
     await alarma.iniciarVigilancia();
+    // FIX AUDITORÍA: voz opcional no impide iniciar vigilancia por sacudidas.
+    try {
+      await voz.iniciar();
+    } catch (e) {
+      debugPrint('🎤 voz: inicio falló; continúan los sensores: $e');
+    }
     listo = true;
     publicar();
     await notificar();
